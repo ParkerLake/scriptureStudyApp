@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Book of Mormon Study</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div id="app">
+
+  <aside id="sidebar">
+    <div class="sidebar-header">
+      <h1>Book of Mormon Study</h1>
+      <input id="globalSearch" type="text" placeholder="Search scripture or notes…" autocomplete="off">
+    </div>
+    <div id="searchResults"></div>
+    <div id="bookList"></div>
+  </aside>
+
+  <main id="main">
+    <div id="topbar">
+      <button id="menuBtn">☰</button>
+      <span class="ref" id="topRef">—</span>
+      <div class="spacer"></div>
+      <button id="prevChapterBtn">‹ Prev</button>
+      <button id="nextChapterBtn">Next ›</button>
+      <button id="panelBtn">Notes ▸</button>
+    </div>
+    <div id="readingArea"></div>
+  </main>
+
+  <aside id="rightpanel">
+    <div class="rp-tabs">
+      <button class="rp-tab active" data-pane="notesPane">Notes</button>
+      <button class="rp-tab" data-pane="contextPane">Context</button>
+      <button class="rp-tab" data-pane="highlightsPane">Highlights</button>
+      <button class="rp-tab" data-pane="settingsPane">Sync</button>
+    </div>
+    <div class="rp-content">
+      <div class="rp-pane active" id="notesPane"></div>
+      <div class="rp-pane" id="contextPane"></div>
+      <div class="rp-pane" id="highlightsPane"></div>
+      <div class="rp-pane" id="settingsPane"></div>
+    </div>
+  </aside>
+
+</div>
+
+<div id="hlToolbar">
+  <button class="hl-type-btn" data-type="highlight">Highlight</button>
+  <button class="hl-type-btn" data-type="underline">Underline</button>
+  <button class="hl-type-btn" data-type="box">Box</button>
+  <div class="hl-divider"></div>
+  <span class="hl-swatch" data-color="#ffd54f" style="background:#ffd54f"></span>
+  <span class="hl-swatch" data-color="#81c995" style="background:#81c995"></span>
+  <span class="hl-swatch" data-color="#8ab4f8" style="background:#8ab4f8"></span>
+  <span class="hl-swatch" data-color="#f28b82" style="background:#f28b82"></span>
+  <span class="hl-swatch" data-color="#c58af9" style="background:#c58af9"></span>
+  <div class="hl-divider"></div>
+  <button class="hl-remove-btn" id="hlRemoveBtn">Clear</button>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
