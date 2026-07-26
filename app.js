@@ -15,7 +15,7 @@
   const LS_POSITION_KEY = 'bom_last_position_v1';
 
   function emptyData() {
-    return { version: 1, highlights: [], chapterNotes: {}, verseNotes: {}, updatedAt: 0 };
+    return { version: 1, highlights: [], chapterNotes: {}, verseNotes: {}, verseTags: {}, updatedAt: 0 };
   }
 
   function loadLocalData() {
@@ -62,6 +62,7 @@
     expandedBooks: new Set(),
     pendingSelection: null,  // {verseEl, bookKey, chapter, verse, start, end}
     syncPushTimer: null,
+    selectedTag: null,
   };
 
   const el = (id) => document.getElementById(id);
@@ -83,6 +84,7 @@
     renderSidebar();
     wireGlobalUI();
     renderSettingsPane();
+    renderTagsPane();
 
     if (STATE.settings.workerUrl && STATE.settings.passcode) {
       await syncPull(true);
@@ -205,7 +207,11 @@
   // Rendering the reading pane
   // ---------------------------------------------------------------------
   function escapeHtml(s) {
-    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    return String(s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
   }
 
   function verseKey(bookKey, chapter, verse) {
@@ -272,6 +278,16 @@
         p.appendChild(dot);
       }
 
+      const tags = STATE.data.verseTags[noteKey] || [];
+      tags.forEach((tag) => {
+        const pill = document.createElement('span');
+        pill.className = 'verse-tag-pill';
+        pill.textContent = tag;
+        pill.title = `Browse every verse tagged "${tag}"`;
+        pill.addEventListener('click', () => browseTag(tag));
+        p.appendChild(pill);
+      });
+
       area.appendChild(p);
     });
 
@@ -283,8 +299,13 @@
       <a href="https://www.churchofjesuschrist.org/study/general-conference?lang=eng&query=${q}" target="_blank" rel="noopener">General Conference talks →</a> &nbsp;·&nbsp;
       <a href="https://www.churchofjesuschrist.org/study/scriptures/bofm/${GOSPEL_LIBRARY_SLUG[book.key] || book.key}/${chapter.chapter}?lang=eng" target="_blank" rel="noopener">Read on Gospel Library →</a>`;
     area.appendChild(linkWrap);
+  }
 
-    wireVerseSelection();
+  function browseTag(tag) {
+    STATE.selectedTag = tag;
+    renderTagsPane();
+    document.querySelector('.rp-tab[data-pane="tagsPane"]').click();
+    openMobilePanel();
   }
 
   // Split verse text into non-overlapping segments based on all annotation
@@ -387,6 +408,44 @@
     showToolbar(range);
   }
 
+  // Find the (textNode, localOffset) pair at a given plain-text character
+  // offset within a verse-text element. Inverse of getTextOffsetInVerse —
+  // used to re-select the same span of text after a re-render, so the
+  // toolbar can stay open across repeated "Apply" clicks for stacking.
+  function findNodeAtOffset(container, targetOffset) {
+    const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, null);
+    let total = 0;
+    let n;
+    let last = null;
+    while ((n = walker.nextNode())) {
+      const len = n.textContent.length;
+      if (total + len >= targetOffset) {
+        return { node: n, offset: targetOffset - total };
+      }
+      total += len;
+      last = n;
+    }
+    if (last) return { node: last, offset: last.textContent.length };
+    return null;
+  }
+
+  function restorePendingSelection() {
+    const sel = STATE.pendingSelection;
+    if (!sel) return null;
+    const verseTextEl = document.querySelector(`.verse[data-verse="${sel.verse}"] .verse-text`);
+    if (!verseTextEl) return null;
+    const startPos = findNodeAtOffset(verseTextEl, sel.start);
+    const endPos = findNodeAtOffset(verseTextEl, sel.end);
+    if (!startPos || !endPos) return null;
+    const range = document.createRange();
+    range.setStart(startPos.node, startPos.offset);
+    range.setEnd(endPos.node, endPos.offset);
+    const winSel = window.getSelection();
+    winSel.removeAllRanges();
+    winSel.addRange(range);
+    return range;
+  }
+
   let activeType = 'highlight';
   let activeColor = '#ffd54f';
 
@@ -403,32 +462,51 @@
       bar.style.top = Math.max(8, window.scrollY + rect.top - 46) + 'px';
       bar.style.left = Math.max(8, window.scrollX + rect.left) + 'px';
     }
+    syncToolbarActiveState();
+  }
+
+  function syncToolbarActiveState() {
+    document.querySelectorAll('.hl-type-btn').forEach((b) => b.classList.toggle('active', b.dataset.type === activeType));
+    document.querySelectorAll('.hl-swatch').forEach((s) => s.classList.toggle('active', s.dataset.color === activeColor));
   }
 
   function hideToolbar() {
     el('hlToolbar').classList.remove('show');
     STATE.pendingSelection = null;
+    window.getSelection().removeAllRanges();
   }
 
   function wireToolbar() {
     document.querySelectorAll('.hl-type-btn').forEach((btn) => {
       btn.addEventListener('click', () => {
         activeType = btn.dataset.type;
-        document.querySelectorAll('.hl-type-btn').forEach((b) => b.classList.remove('active'));
-        btn.classList.add('active');
-        applyHighlight();
+        syncToolbarActiveState();
       });
     });
     document.querySelectorAll('.hl-swatch').forEach((sw) => {
       sw.addEventListener('click', () => {
         activeColor = sw.dataset.color;
-        applyHighlight();
+        syncToolbarActiveState();
       });
     });
+    el('hlApplyBtn').addEventListener('click', applyHighlight);
     el('hlRemoveBtn').addEventListener('click', removeHighlightsInSelection);
     document.addEventListener('mousedown', (e) => {
       if (!e.target.closest('#hlToolbar') && !e.target.closest('.verse-text')) hideToolbar();
     });
+  }
+
+  // After applying/removing a highlight we re-render the chapter (so the
+  // new stacked annotation shows up), then restore the same text selection
+  // and keep the toolbar open, so you can immediately add another layer
+  // (e.g. underline in a different color) without re-selecting the text.
+  function reopenToolbarOnSameSelection() {
+    const range = restorePendingSelection();
+    if (range) {
+      showToolbar(range);
+    } else {
+      hideToolbar();
+    }
   }
 
   function applyHighlight() {
@@ -446,10 +524,9 @@
       createdAt: Date.now(),
     });
     saveLocalData();
-    window.getSelection().removeAllRanges();
-    hideToolbar();
     renderChapter();
     renderHighlightsPane();
+    reopenToolbarOnSameSelection();
   }
 
   function removeHighlightsInSelection() {
@@ -461,10 +538,9 @@
       return !overlaps;
     });
     saveLocalData();
-    window.getSelection().removeAllRanges();
-    hideToolbar();
     renderChapter();
     renderHighlightsPane();
+    reopenToolbarOnSameSelection();
   }
 
   // ---------------------------------------------------------------------
@@ -483,27 +559,85 @@
     }, 30);
   }
 
+  function getAllTags() {
+    const set = new Set();
+    Object.values(STATE.data.verseTags).forEach((tags) => tags.forEach((t) => set.add(t)));
+    return Array.from(set).sort();
+  }
+
+  function refreshTagDatalist() {
+    const dl = el('allTagsList');
+    if (!dl) return;
+    dl.innerHTML = getAllTags().map((t) => `<option value="${escapeHtml(t)}">`).join('');
+  }
+
+  function addTagToVerse(bookKey, chapter, verse, raw) {
+    const tag = raw.trim().toLowerCase().replace(/[,\n]/g, '');
+    if (!tag) return;
+    const vKey = verseKey(bookKey, chapter, verse);
+    const list = STATE.data.verseTags[vKey] || [];
+    if (!list.includes(tag)) {
+      list.push(tag);
+      STATE.data.verseTags[vKey] = list;
+      saveLocalData();
+      renderChapter();
+      renderNotesPane();
+      renderTagsPane();
+      refocusTagInput(verse);
+    }
+  }
+
+  function refocusTagInput(verse) {
+    setTimeout(() => {
+      const input = document.querySelector(`.tag-input[data-verse="${verse}"]`);
+      if (input) input.focus();
+    }, 0);
+  }
+
+  function removeTagFromVerse(bookKey, chapter, verse, tag) {
+    const vKey = verseKey(bookKey, chapter, verse);
+    const list = (STATE.data.verseTags[vKey] || []).filter((t) => t !== tag);
+    if (list.length) {
+      STATE.data.verseTags[vKey] = list;
+    } else {
+      delete STATE.data.verseTags[vKey];
+    }
+    saveLocalData();
+    renderChapter();
+    renderNotesPane();
+    renderTagsPane();
+  }
+
   function renderNotesPane() {
     const pane = el('notesPane');
     const book = STATE.currentBook;
     const chapter = currentChapterObj();
     const cKey = chapterKey(book.key, chapter.chapter);
+    refreshTagDatalist();
 
     let html = `<label>Chapter note — ${book.name} ${chapter.chapter}</label>
       <textarea id="chapterNoteInput" placeholder="Your thoughts on this chapter…">${escapeHtml(STATE.data.chapterNotes[cKey] || '')}</textarea>
-      <label style="margin-top:14px">Verse notes</label>`;
+      <label style="margin-top:14px">Verse notes &amp; tags</label>`;
 
-    const versesWithNotes = chapter.verses.filter((v) => STATE.data.verseNotes[verseKey(book.key, chapter.chapter, v.verse)]);
-    const showVerses = [...versesWithNotes.map((v) => v.verse)];
-    if (focusedVerseForNote && !showVerses.includes(focusedVerseForNote)) showVerses.push(focusedVerseForNote);
+    const showVerses = new Set();
+    chapter.verses.forEach((v) => {
+      const vKey = verseKey(book.key, chapter.chapter, v.verse);
+      if (STATE.data.verseNotes[vKey] || (STATE.data.verseTags[vKey] || []).length) showVerses.add(v.verse);
+    });
+    if (focusedVerseForNote) showVerses.add(focusedVerseForNote);
 
-    if (!showVerses.length) {
-      html += `<div class="sync-status">Click any verse number in the reading pane to add a note to it.</div>`;
+    if (!showVerses.size) {
+      html += `<div class="sync-status">Click any verse number in the reading pane to add a note or tags to it.</div>`;
     } else {
-      showVerses.sort((a, b) => a - b).forEach((vnum) => {
+      Array.from(showVerses).sort((a, b) => a - b).forEach((vnum) => {
         const vKey = verseKey(book.key, chapter.chapter, vnum);
+        const tags = STATE.data.verseTags[vKey] || [];
         html += `<div class="verse-note-block">
           <div class="vn-ref">${book.name} ${chapter.chapter}:${vnum}</div>
+          <div class="vn-tags" data-verse="${vnum}">
+            ${tags.map((t) => `<span class="tag-chip" data-tag="${escapeHtml(t)}">${escapeHtml(t)} <span class="tag-remove" data-tag="${escapeHtml(t)}">×</span></span>`).join('')}
+            <input class="tag-input" data-verse="${vnum}" list="allTagsList" placeholder="+ tag" autocomplete="off">
+          </div>
           <textarea id="vnote-${vnum}" data-verse="${vnum}" placeholder="Note for this verse…">${escapeHtml(STATE.data.verseNotes[vKey] || '')}</textarea>
         </div>`;
       });
@@ -528,6 +662,22 @@
         saveLocalData();
         renderChapter();
       }, 500));
+    });
+
+    pane.querySelectorAll('.tag-input').forEach((input) => {
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ',') {
+          e.preventDefault();
+          addTagToVerse(book.key, chapter.chapter, parseInt(input.dataset.verse, 10), input.value);
+          input.value = '';
+        }
+      });
+    });
+    pane.querySelectorAll('.tag-remove').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        const vnum = parseInt(e.target.closest('.vn-tags').dataset.verse, 10);
+        removeTagFromVerse(book.key, chapter.chapter, vnum, e.target.dataset.tag);
+      });
     });
   }
 
@@ -610,6 +760,96 @@
         if (target) target.scrollIntoView({ behavior: 'smooth', block: 'center' });
       });
     });
+  }
+
+  // ---------------------------------------------------------------------
+  // Tags pane — browse every verse carrying a given tag, across all books
+  // ---------------------------------------------------------------------
+  function getAllTagsWithCounts() {
+    const counts = {};
+    Object.values(STATE.data.verseTags).forEach((tags) => tags.forEach((t) => (counts[t] = (counts[t] || 0) + 1)));
+    return Object.entries(counts)
+      .map(([tag, count]) => ({ tag, count }))
+      .sort((a, b) => a.tag.localeCompare(b.tag));
+  }
+
+  function bookOrderIndex(bookKey) {
+    return STATE.content.books.findIndex((b) => b.key === bookKey);
+  }
+
+  function getVersesForTag(tag) {
+    const results = [];
+    Object.entries(STATE.data.verseTags).forEach(([key, tags]) => {
+      if (!tags.includes(tag)) return;
+      const [bookKey, chapterStr, verseStr] = key.split('|');
+      const book = STATE.booksByKey[bookKey];
+      if (!book) return;
+      const chapterNum = parseInt(chapterStr, 10);
+      const verseNum = parseInt(verseStr, 10);
+      const chObj = book.chapters.find((c) => c.chapter === chapterNum);
+      const vObj = chObj && chObj.verses.find((v) => v.verse === verseNum);
+      results.push({
+        bookKey,
+        bookName: book.name,
+        chapter: chapterNum,
+        verse: verseNum,
+        snippet: vObj ? vObj.text.slice(0, 100) : '',
+      });
+    });
+    results.sort((a, b) => bookOrderIndex(a.bookKey) - bookOrderIndex(b.bookKey) || a.chapter - b.chapter || a.verse - b.verse);
+    return results;
+  }
+
+  function renderTagsPane() {
+    const pane = el('tagsPane');
+    if (!pane || !STATE.content) return;
+
+    if (!STATE.selectedTag) {
+      const allTags = getAllTagsWithCounts();
+      let html = `<label>Tags</label>`;
+      if (!allTags.length) {
+        html += `<div class="sync-status">Add tags to verses from the Notes panel (click a verse number, then type a tag) to browse them here by theme.</div>`;
+      } else {
+        html += allTags
+          .map((t) => `<button class="tag-browse-btn" data-tag="${escapeHtml(t.tag)}">${escapeHtml(t.tag)} <span class="tag-count">${t.count}</span></button>`)
+          .join('');
+      }
+      pane.innerHTML = html;
+      pane.querySelectorAll('.tag-browse-btn').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          STATE.selectedTag = btn.dataset.tag;
+          renderTagsPane();
+        });
+      });
+    } else {
+      const tag = STATE.selectedTag;
+      const matches = getVersesForTag(tag);
+      let html = `<button class="btn secondary" id="tagBackBtn">← All tags</button>
+        <label style="margin-top:12px">"${escapeHtml(tag)}" — ${matches.length} verse${matches.length === 1 ? '' : 's'}</label>`;
+      html += matches
+        .map(
+          (m) => `<div class="hl-list-item" data-book="${m.bookKey}" data-chapter="${m.chapter}" data-verse="${m.verse}">
+            <div class="ref">${m.bookName} ${m.chapter}:${m.verse}</div>
+            <div>${escapeHtml(m.snippet)}${m.snippet.length >= 100 ? '…' : ''}</div>
+          </div>`
+        )
+        .join('');
+      pane.innerHTML = html;
+      el('tagBackBtn').addEventListener('click', () => {
+        STATE.selectedTag = null;
+        renderTagsPane();
+      });
+      pane.querySelectorAll('.hl-list-item').forEach((item) => {
+        item.addEventListener('click', () => {
+          navigateTo(item.dataset.book, parseInt(item.dataset.chapter, 10));
+          const verseNum = item.dataset.verse;
+          setTimeout(() => {
+            const target = document.querySelector(`.verse[data-verse="${verseNum}"]`);
+            if (target) target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }, 60);
+        });
+      });
+    }
   }
 
   // ---------------------------------------------------------------------
@@ -794,6 +1034,19 @@
       }
     });
 
+    // tags
+    Object.entries(STATE.data.verseTags).forEach(([key, tags]) => {
+      const matchingTags = tags.filter((t) => t.includes(q));
+      if (matchingTags.length) {
+        const [bookKey, chapter, verse] = key.split('|');
+        const book = STATE.booksByKey[bookKey];
+        results.push({
+          type: 'tag', book: bookKey, bookName: book ? book.name : bookKey, chapter: +chapter, verse: +verse,
+          snippet: 'Tagged: ' + matchingTags.join(', '),
+        });
+      }
+    });
+
     if (!results.length) {
       box.innerHTML = `<div class="search-result">No matches.</div>`;
       return;
@@ -803,6 +1056,7 @@
       .map((r) => {
         const label = r.type === 'verse' ? `${r.bookName} ${r.chapter}:${r.verse}`
           : r.type === 'note' ? `Note · ${r.bookName} ${r.chapter}:${r.verse}`
+          : r.type === 'tag' ? `Tag · ${r.bookName} ${r.chapter}:${r.verse}`
           : `Chapter note · ${r.bookName} ${r.chapter}`;
         return `<div class="search-result" data-book="${r.book}" data-chapter="${r.chapter}" data-verse="${r.verse || ''}">
           <b>${label}</b><span class="snippet">${escapeHtml(r.snippet)}</span>
@@ -839,6 +1093,7 @@
   function wireGlobalUI() {
     wireSearch();
     wireToolbar();
+    wireVerseSelection();
 
     document.querySelectorAll('.rp-tab').forEach((tab) => {
       tab.addEventListener('click', () => {

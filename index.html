@@ -35,17 +35,21 @@
       <button class="rp-tab active" data-pane="notesPane">Notes</button>
       <button class="rp-tab" data-pane="contextPane">Context</button>
       <button class="rp-tab" data-pane="highlightsPane">Highlights</button>
+      <button class="rp-tab" data-pane="tagsPane">Tags</button>
       <button class="rp-tab" data-pane="settingsPane">Sync</button>
     </div>
     <div class="rp-content">
       <div class="rp-pane active" id="notesPane"></div>
       <div class="rp-pane" id="contextPane"></div>
       <div class="rp-pane" id="highlightsPane"></div>
+      <div class="rp-pane" id="tagsPane"></div>
       <div class="rp-pane" id="settingsPane"></div>
     </div>
   </aside>
 
 </div>
+
+<datalist id="allTagsList"></datalist>
 
 <div id="hlToolbar">
   <button class="hl-type-btn" data-type="highlight">Highlight</button>
@@ -58,6 +62,7 @@
   <span class="hl-swatch" data-color="#f28b82" style="background:#f28b82"></span>
   <span class="hl-swatch" data-color="#c58af9" style="background:#c58af9"></span>
   <div class="hl-divider"></div>
+  <button class="hl-apply-btn" id="hlApplyBtn">Apply ✓</button>
   <button class="hl-remove-btn" id="hlRemoveBtn">Clear</button>
 </div>
 
