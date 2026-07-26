@@ -1,7 +1,8 @@
 /* Book of Mormon Study App
    All data (highlights, notes) is stored locally and, optionally, synced
-   to a single JSON file in a GitHub repo using a personal access token
-   the user supplies. Nothing is sent anywhere else. */
+   through a small Cloudflare Worker (see worker.js) that holds the real
+   GitHub credentials server-side. The browser only ever holds a passcode
+   for that Worker, never a GitHub token. */
 
 (function () {
   'use strict';
@@ -10,7 +11,7 @@
   // Storage helpers
   // ---------------------------------------------------------------------
   const LS_DATA_KEY = 'bom_study_data_v1';
-  const LS_SETTINGS_KEY = 'bom_gh_settings_v1';
+  const LS_SETTINGS_KEY = 'bom_sync_settings_v2';
   const LS_POSITION_KEY = 'bom_last_position_v1';
 
   function emptyData() {
@@ -32,15 +33,15 @@
   function saveLocalData() {
     STATE.data.updatedAt = Date.now();
     localStorage.setItem(LS_DATA_KEY, JSON.stringify(STATE.data));
-    scheduleGithubPush();
+    scheduleSyncPush();
   }
 
   function loadSettings() {
     try {
       const raw = localStorage.getItem(LS_SETTINGS_KEY);
-      return raw ? JSON.parse(raw) : { owner: '', repo: '', token: '', path: 'data/study-data.json' };
+      return raw ? JSON.parse(raw) : { workerUrl: '', passcode: '' };
     } catch (e) {
-      return { owner: '', repo: '', token: '', path: 'data/study-data.json' };
+      return { workerUrl: '', passcode: '' };
     }
   }
 
@@ -60,8 +61,7 @@
     currentChapter: 1,
     expandedBooks: new Set(),
     pendingSelection: null,  // {verseEl, bookKey, chapter, verse, start, end}
-    githubPushTimer: null,
-    githubSha: null,
+    syncPushTimer: null,
   };
 
   const el = (id) => document.getElementById(id);
@@ -84,8 +84,8 @@
     wireGlobalUI();
     renderSettingsPane();
 
-    if (STATE.settings.token && STATE.settings.owner && STATE.settings.repo) {
-      await githubPull(true);
+    if (STATE.settings.workerUrl && STATE.settings.passcode) {
+      await syncPull(true);
     }
 
     const pos = loadPosition();
@@ -613,83 +613,64 @@
   }
 
   // ---------------------------------------------------------------------
-  // Settings / GitHub sync pane
+  // Settings / sync pane (talks to a Cloudflare Worker, not GitHub directly)
   // ---------------------------------------------------------------------
   function renderSettingsPane() {
     const pane = el('settingsPane');
     const s = STATE.settings;
     pane.innerHTML = `
-      <label style="font-size:13px;margin-bottom:10px;">GitHub sync</label>
-      <div class="sync-status" style="margin-bottom:12px">Your notes and highlights can be stored as a JSON file in a GitHub repo you control, so they follow you across devices. Use a fine-grained personal access token scoped to just that repo (Contents: read and write).</div>
-      <div class="settings-row"><label>Repo owner</label><input id="ghOwner" value="${escapeHtml(s.owner || '')}" placeholder="e.g. parkerlake"></div>
-      <div class="settings-row"><label>Repo name</label><input id="ghRepo" value="${escapeHtml(s.repo || '')}" placeholder="e.g. scriptureStudyApp"></div>
-      <div class="settings-row"><label>File path</label><input id="ghPath" value="${escapeHtml(s.path || 'data/study-data.json')}"></div>
-      <div class="settings-row"><label>Personal access token</label><input id="ghToken" type="password" value="${escapeHtml(s.token || '')}" placeholder="github_pat_…"></div>
-      <button class="btn" id="ghSaveBtn">Save settings</button>
-      <button class="btn secondary" id="ghPullBtn">Pull from GitHub</button>
-      <button class="btn secondary" id="ghPushBtn">Push to GitHub</button>
-      <div class="sync-status" id="ghStatus"></div>
+      <label style="font-size:13px;margin-bottom:10px;">Sync</label>
+      <div class="sync-status" style="margin-bottom:12px">Your notes and highlights sync through a small Cloudflare Worker you deploy (see worker.js in the repo), which holds your GitHub credentials server-side. This app only ever needs the Worker's URL and your passcode — never a GitHub token.</div>
+      <div class="settings-row"><label>Worker URL</label><input id="workerUrlInput" value="${escapeHtml(s.workerUrl || '')}" placeholder="https://bom-sync.yourname.workers.dev"></div>
+      <div class="settings-row"><label>Passcode</label><input id="passcodeInput" type="password" value="${escapeHtml(s.passcode || '')}" placeholder="whatever passcode you set on the Worker"></div>
+      <button class="btn" id="syncSaveBtn">Save settings</button>
+      <button class="btn secondary" id="syncPullBtn">Pull</button>
+      <button class="btn secondary" id="syncPushBtn">Push</button>
+      <div class="sync-status" id="syncStatus"></div>
       <hr style="margin:18px 0;border:none;border-top:1px solid var(--border)">
       <label>Local backup</label>
       <button class="btn secondary" id="exportBtn">Export my data (.json)</button>
       <button class="btn secondary" id="importBtn">Import data</button>
       <input type="file" id="importFile" accept="application/json" style="display:none">
     `;
-    el('ghSaveBtn').addEventListener('click', () => {
+    el('syncSaveBtn').addEventListener('click', () => {
       STATE.settings = {
-        owner: el('ghOwner').value.trim(),
-        repo: el('ghRepo').value.trim(),
-        path: el('ghPath').value.trim() || 'data/study-data.json',
-        token: el('ghToken').value.trim(),
+        workerUrl: el('workerUrlInput').value.trim().replace(/\/$/, ''),
+        passcode: el('passcodeInput').value.trim(),
       };
       saveSettings(STATE.settings);
-      setGhStatus('Settings saved.');
+      setSyncStatus('Settings saved.');
     });
-    el('ghPullBtn').addEventListener('click', () => githubPull(false));
-    el('ghPushBtn').addEventListener('click', () => githubPush(true));
+    el('syncPullBtn').addEventListener('click', () => syncPull(false));
+    el('syncPushBtn').addEventListener('click', () => syncPush(true));
     el('exportBtn').addEventListener('click', exportData);
     el('importBtn').addEventListener('click', () => el('importFile').click());
     el('importFile').addEventListener('change', importDataFile);
   }
 
-  function setGhStatus(msg) {
-    const s = el('ghStatus');
+  function setSyncStatus(msg) {
+    const s = el('syncStatus');
     if (s) s.textContent = msg;
   }
 
-  function b64EncodeUnicode(str) {
-    const bytes = new TextEncoder().encode(str);
-    let binary = '';
-    bytes.forEach((b) => (binary += String.fromCharCode(b)));
-    return btoa(binary);
-  }
-  function b64DecodeUnicode(b64) {
-    const binary = atob(b64);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-    return new TextDecoder().decode(bytes);
-  }
-
-  async function githubPull(silent) {
+  async function syncPull(silent) {
     const s = STATE.settings;
-    if (!s.owner || !s.repo || !s.token) {
-      if (!silent) setGhStatus('Fill in owner, repo, and token first.');
+    if (!s.workerUrl || !s.passcode) {
+      if (!silent) setSyncStatus('Fill in the Worker URL and passcode first.');
       return;
     }
-    setGhStatus('Pulling…');
+    setSyncStatus('Pulling…');
     try {
-      const url = `https://api.github.com/repos/${s.owner}/${s.repo}/contents/${s.path}`;
-      const res = await fetch(url, {
-        headers: { Authorization: `token ${s.token}`, Accept: 'application/vnd.github+json' },
+      const res = await fetch(s.workerUrl + '/data', {
+        headers: { 'X-Passcode': s.passcode },
       });
-      if (res.status === 404) {
-        setGhStatus('No remote data file yet — push to create one.');
+      if (res.status === 401) throw new Error('Passcode rejected by Worker.');
+      if (!res.ok) throw new Error(`Worker returned ${res.status}`);
+      const remoteData = await res.json();
+      if (remoteData.notFound) {
+        setSyncStatus('No remote data yet — push to create it.');
         return;
       }
-      if (!res.ok) throw new Error(`GitHub returned ${res.status}`);
-      const json = await res.json();
-      STATE.githubSha = json.sha;
-      const remoteData = JSON.parse(b64DecodeUnicode(json.content));
       if (!STATE.data.updatedAt || (remoteData.updatedAt || 0) >= STATE.data.updatedAt) {
         STATE.data = Object.assign(emptyData(), remoteData);
         localStorage.setItem(LS_DATA_KEY, JSON.stringify(STATE.data));
@@ -699,66 +680,42 @@
           renderHighlightsPane();
         }
       }
-      setGhStatus('Synced from GitHub just now.');
+      setSyncStatus('Synced just now.');
     } catch (e) {
       console.warn(e);
-      setGhStatus('Pull failed: ' + e.message);
+      setSyncStatus('Pull failed: ' + e.message);
     }
   }
 
-  async function githubPush(manual) {
+  async function syncPush(manual) {
     const s = STATE.settings;
-    if (!s.owner || !s.repo || !s.token) {
-      if (manual) setGhStatus('Fill in owner, repo, and token first.');
+    if (!s.workerUrl || !s.passcode) {
+      if (manual) setSyncStatus('Fill in the Worker URL and passcode first.');
       return;
     }
-    setGhStatus('Pushing…');
+    setSyncStatus('Pushing…');
     try {
-      const url = `https://api.github.com/repos/${s.owner}/${s.repo}/contents/${s.path}`;
-      // Always fetch latest sha right before writing to avoid clobbering
-      let sha = STATE.githubSha;
-      try {
-        const head = await fetch(url, { headers: { Authorization: `token ${s.token}`, Accept: 'application/vnd.github+json' } });
-        if (head.ok) {
-          const headJson = await head.json();
-          sha = headJson.sha;
-        } else if (head.status === 404) {
-          sha = undefined;
-        }
-      } catch (e) { /* ignore, fall back to cached sha */ }
-
-      const body = {
-        message: 'Update study data — ' + new Date().toISOString(),
-        content: b64EncodeUnicode(JSON.stringify(STATE.data, null, 1)),
-      };
-      if (sha) body.sha = sha;
-
-      const res = await fetch(url, {
+      const res = await fetch(s.workerUrl + '/data', {
         method: 'PUT',
-        headers: {
-          Authorization: `token ${s.token}`,
-          Accept: 'application/vnd.github+json',
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(body),
+        headers: { 'X-Passcode': s.passcode, 'Content-Type': 'application/json' },
+        body: JSON.stringify(STATE.data),
       });
+      if (res.status === 401) throw new Error('Passcode rejected by Worker.');
       if (!res.ok) {
         const errText = await res.text();
-        throw new Error(`GitHub returned ${res.status}: ${errText.slice(0, 150)}`);
+        throw new Error(`Worker returned ${res.status}: ${errText.slice(0, 150)}`);
       }
-      const json = await res.json();
-      STATE.githubSha = json.content.sha;
-      setGhStatus('Pushed to GitHub just now.');
+      setSyncStatus('Pushed just now.');
     } catch (e) {
       console.warn(e);
-      setGhStatus('Push failed: ' + e.message);
+      setSyncStatus('Push failed: ' + e.message);
     }
   }
 
-  function scheduleGithubPush() {
-    if (!STATE.settings.token) return;
-    clearTimeout(STATE.githubPushTimer);
-    STATE.githubPushTimer = setTimeout(() => githubPush(false), 3000);
+  function scheduleSyncPush() {
+    if (!STATE.settings.workerUrl || !STATE.settings.passcode) return;
+    clearTimeout(STATE.syncPushTimer);
+    STATE.syncPushTimer = setTimeout(() => syncPush(false), 3000);
   }
 
   function exportData() {
@@ -899,7 +856,7 @@
     el('panelBtn').addEventListener('click', openMobilePanel);
 
     window.addEventListener('beforeunload', () => {
-      if (STATE.settings.token) githubPush(false);
+      if (STATE.settings.workerUrl && STATE.settings.passcode) syncPush(false);
     });
   }
 
