@@ -51,19 +51,31 @@
 
 <datalist id="allTagsList"></datalist>
 
+<div id="hlBackdrop"></div>
+
+<button id="annotateFab" type="button">✎ Annotate</button>
+
 <div id="hlToolbar">
-  <button class="hl-type-btn" data-type="highlight">Highlight</button>
-  <button class="hl-type-btn" data-type="underline">Underline</button>
-  <button class="hl-type-btn" data-type="box">Box</button>
+  <div class="hl-sheet-handle"></div>
+  <div class="hl-sheet-row">
+    <button class="hl-type-btn" data-type="highlight">Highlight</button>
+    <button class="hl-type-btn" data-type="underline">Underline</button>
+    <button class="hl-type-btn" data-type="box">Box</button>
+  </div>
   <div class="hl-divider"></div>
-  <span class="hl-swatch" data-color="#ffd54f" style="background:#ffd54f"></span>
-  <span class="hl-swatch" data-color="#81c995" style="background:#81c995"></span>
-  <span class="hl-swatch" data-color="#8ab4f8" style="background:#8ab4f8"></span>
-  <span class="hl-swatch" data-color="#f28b82" style="background:#f28b82"></span>
-  <span class="hl-swatch" data-color="#c58af9" style="background:#c58af9"></span>
+  <div class="hl-sheet-row">
+    <span class="hl-swatch" data-color="#ffd54f" style="background:#ffd54f"></span>
+    <span class="hl-swatch" data-color="#81c995" style="background:#81c995"></span>
+    <span class="hl-swatch" data-color="#8ab4f8" style="background:#8ab4f8"></span>
+    <span class="hl-swatch" data-color="#f28b82" style="background:#f28b82"></span>
+    <span class="hl-swatch" data-color="#c58af9" style="background:#c58af9"></span>
+  </div>
   <div class="hl-divider"></div>
-  <button class="hl-apply-btn" id="hlApplyBtn">Apply ✓</button>
-  <button class="hl-remove-btn" id="hlRemoveBtn">Clear</button>
+  <div class="hl-sheet-row">
+    <button class="hl-apply-btn" id="hlApplyBtn">Apply ✓</button>
+    <button class="hl-remove-btn" id="hlRemoveBtn">Clear</button>
+    <button class="hl-done-btn" id="hlDoneBtn">Done</button>
+  </div>
 </div>
 
 <script src="app.js"></script>

@@ -377,7 +377,7 @@
     el('readingArea').addEventListener('touchend', handleSelectionChange);
   }
 
-  function handleSelectionChange() {
+  function handleSelectionChange(e) {
     const sel = window.getSelection();
     if (!sel || sel.isCollapsed || sel.rangeCount === 0) {
       hideToolbar();
@@ -398,14 +398,27 @@
       hideToolbar();
       return;
     }
+    // Selections made by touch are handled differently from mouse selections:
+    // a floating toolbar positioned right over/near the selected text would
+    // sit on top of (or right next to) iOS/Android's native text-selection
+    // callout (Copy / Look Up / Share), fighting it for the same screen
+    // space and taps. So for touch we show a small docked "Annotate" button
+    // instead, and only reveal the full toolbar (as a bottom sheet, away
+    // from the selection) once the person deliberately taps it.
+    const viaTouch = !!(e && e.type === 'touchend');
     STATE.pendingSelection = {
       bookKey: STATE.currentBook.key,
       chapter: STATE.currentChapter,
       verse: parseInt(verseEl.dataset.verse, 10),
       start: Math.min(start, end),
       end: Math.max(start, end),
+      viaTouch,
     };
-    showToolbar(range);
+    if (viaTouch) {
+      showAnnotateFab();
+    } else {
+      showToolbar(range);
+    }
   }
 
   // Find the (textNode, localOffset) pair at a given plain-text character
@@ -449,8 +462,12 @@
   let activeType = 'highlight';
   let activeColor = '#ffd54f';
 
+  // Desktop/mouse: float the toolbar right above the selection, as before.
   function showToolbar(range) {
     const bar = el('hlToolbar');
+    bar.classList.remove('hl-sheet-mode', 'show-open');
+    el('hlBackdrop').classList.remove('show');
+    el('annotateFab').classList.remove('show');
     let rect;
     try {
       rect = range.getBoundingClientRect();
@@ -465,15 +482,47 @@
     syncToolbarActiveState();
   }
 
+  // Touch: show a small persistent docked button instead of auto-opening
+  // anything over the selection, so nothing competes with the OS's native
+  // text-selection callout for space or taps.
+  function showAnnotateFab() {
+    el('hlToolbar').classList.remove('show', 'show-open');
+    el('hlBackdrop').classList.remove('show');
+    el('annotateFab').classList.add('show');
+  }
+
+  // Touch: open the annotation controls as a bottom sheet, docked to the
+  // bottom of the screen (never overlapping the selected text itself).
+  function openSheet() {
+    el('annotateFab').classList.remove('show');
+    const bar = el('hlToolbar');
+    bar.style.top = '';
+    bar.style.left = '';
+    bar.classList.add('hl-sheet-mode', 'show');
+    el('hlBackdrop').classList.add('show');
+    syncToolbarActiveState();
+    requestAnimationFrame(() => bar.classList.add('show-open'));
+  }
+
   function syncToolbarActiveState() {
     document.querySelectorAll('.hl-type-btn').forEach((b) => b.classList.toggle('active', b.dataset.type === activeType));
     document.querySelectorAll('.hl-swatch').forEach((s) => s.classList.toggle('active', s.dataset.color === activeColor));
   }
 
   function hideToolbar() {
-    el('hlToolbar').classList.remove('show');
+    const bar = el('hlToolbar');
+    const wasSheet = bar.classList.contains('hl-sheet-mode');
+    el('hlBackdrop').classList.remove('show');
+    el('annotateFab').classList.remove('show');
     STATE.pendingSelection = null;
     window.getSelection().removeAllRanges();
+    if (wasSheet) {
+      // let the slide-down transition play before fully hiding
+      bar.classList.remove('show-open');
+      setTimeout(() => bar.classList.remove('show', 'hl-sheet-mode'), 220);
+    } else {
+      bar.classList.remove('show');
+    }
   }
 
   function wireToolbar() {
@@ -491,21 +540,40 @@
     });
     el('hlApplyBtn').addEventListener('click', applyHighlight);
     el('hlRemoveBtn').addEventListener('click', removeHighlightsInSelection);
-    document.addEventListener('mousedown', (e) => {
-      if (!e.target.closest('#hlToolbar') && !e.target.closest('.verse-text')) hideToolbar();
-    });
+    el('hlDoneBtn').addEventListener('click', hideToolbar);
+    el('annotateFab').addEventListener('click', openSheet);
+    el('hlBackdrop').addEventListener('click', hideToolbar);
+    const dismissOutside = (e) => {
+      if (e.target.closest('#hlToolbar') || e.target.closest('.verse-text') || e.target.closest('#annotateFab')) return;
+      hideToolbar();
+    };
+    document.addEventListener('mousedown', dismissOutside);
+    document.addEventListener('touchstart', dismissOutside, { passive: true });
   }
 
   // After applying/removing a highlight we re-render the chapter (so the
-  // new stacked annotation shows up), then restore the same text selection
-  // and keep the toolbar open, so you can immediately add another layer
-  // (e.g. underline in a different color) without re-selecting the text.
+  // new stacked annotation shows up), then keep the toolbar open on the
+  // same selection so you can immediately add another layer (e.g. underline
+  // in a different color) without re-selecting the text.
   function reopenToolbarOnSameSelection() {
-    const range = restorePendingSelection();
-    if (range) {
-      showToolbar(range);
-    } else {
+    if (!STATE.pendingSelection) {
       hideToolbar();
+      return;
+    }
+    if (STATE.pendingSelection.viaTouch) {
+      // No need to restore a live browser Selection here — the sheet is
+      // positioned independently of it, and the stored start/end offsets
+      // are all applyHighlight()/removeHighlightsInSelection() need.
+      // Re-creating a live Selection on touch devices can also re-trigger
+      // the native selection callout, which is exactly what we're avoiding.
+      openSheet();
+    } else {
+      const range = restorePendingSelection();
+      if (range) {
+        showToolbar(range);
+      } else {
+        hideToolbar();
+      }
     }
   }
 

@@ -253,18 +253,22 @@ html, body {
 }
 #churchLink a:hover { text-decoration: underline; }
 
-/* ---------- Highlight toolbar ---------- */
+/* ---------- Highlight toolbar (desktop: floats near the selection) ---------- */
 #hlToolbar {
   position: absolute;
   display: none;
+  align-items: center;
   background: #2b2620;
   border-radius: 8px;
   padding: 6px;
   gap: 4px;
-  z-index: 50;
+  z-index: 61;
   box-shadow: 0 6px 18px rgba(0,0,0,.25);
 }
 #hlToolbar.show { display: flex; }
+.hl-sheet-row { display: flex; align-items: center; gap: 4px; }
+.hl-sheet-handle { display: none; }
+.hl-done-btn { display: none; }
 .hl-swatch {
   width: 22px;
   height: 22px;
@@ -306,6 +310,98 @@ html, body {
   font-size: 11px;
   cursor: pointer;
 }
+
+/* ---------- Highlight toolbar in "sheet" mode (touch: docked to the
+   bottom of the screen instead of floating over the selection, so it
+   never competes with the OS's native text-selection callout) ---------- */
+#hlToolbar.hl-sheet-mode {
+  position: fixed;
+  top: auto;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: 100%;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+  border-radius: 18px 18px 0 0;
+  padding: 8px 18px calc(16px + env(safe-area-inset-bottom, 0px));
+  transform: translateY(100%);
+  transition: transform .22s ease;
+  box-shadow: 0 -8px 28px rgba(0,0,0,.3);
+}
+#hlToolbar.hl-sheet-mode.show { display: flex; }
+#hlToolbar.hl-sheet-mode.show-open { transform: translateY(0); }
+#hlToolbar.hl-sheet-mode .hl-sheet-handle {
+  display: block;
+  width: 36px;
+  height: 4px;
+  border-radius: 2px;
+  background: #55493a;
+  margin: 2px auto 4px;
+}
+#hlToolbar.hl-sheet-mode .hl-sheet-row {
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+#hlToolbar.hl-sheet-mode .hl-divider { display: none; }
+#hlToolbar.hl-sheet-mode .hl-type-btn,
+#hlToolbar.hl-sheet-mode .hl-apply-btn,
+#hlToolbar.hl-sheet-mode .hl-remove-btn,
+#hlToolbar.hl-sheet-mode .hl-done-btn {
+  padding: 10px 16px;
+  font-size: 13.5px;
+  min-height: 44px;
+  margin-right: 0;
+}
+#hlToolbar.hl-sheet-mode .hl-swatch {
+  width: 34px;
+  height: 34px;
+}
+#hlToolbar.hl-sheet-mode .hl-done-btn {
+  display: block;
+  background: #40382e;
+  border: none;
+  color: #f0ebe0;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+/* Backdrop behind the mobile sheet; tapping it dismisses the sheet */
+#hlBackdrop {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(20,16,10,.28);
+  z-index: 59;
+}
+#hlBackdrop.show { display: block; }
+
+/* Persistent docked button that appears once text is selected via touch;
+   tapping it opens the annotation sheet. Keeping this separate from the
+   sheet itself (rather than auto-opening the sheet on selection) means it
+   never overlaps the OS's native Copy/Look Up/Share selection menu. */
+#annotateFab {
+  display: none;
+  position: fixed;
+  left: 50%;
+  bottom: calc(18px + env(safe-area-inset-bottom, 0px));
+  transform: translateX(-50%);
+  z-index: 58;
+  background: var(--accent);
+  color: white;
+  border: none;
+  border-radius: 24px;
+  padding: 12px 22px;
+  font-size: 14px;
+  font-weight: 700;
+  font-family: var(--sans);
+  cursor: pointer;
+  box-shadow: 0 6px 18px rgba(0,0,0,.3);
+}
+#annotateFab.show { display: block; }
 
 /* ---------- Right panel ---------- */
 #rightpanel {
