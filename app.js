@@ -651,7 +651,7 @@
 
   function refocusTagInput(verse) {
     setTimeout(() => {
-      const target = document.querySelector(`.tag-select[data-verse="${verse}"]`)
+      const target = document.querySelector(`.tag-picker-btn[data-verse="${verse}"]`)
         || document.querySelector(`.tag-new-input[data-verse="${verse}"]`);
       if (target) target.focus();
     }, 0);
@@ -676,18 +676,31 @@
   // brand-new tag; it reverts back to the dropdown once they confirm it (or
   // click/tab away), keeping every later tag choice a pick from that list.
   let addingTagForVerse = null;
+  // Which verse's custom dropdown menu is currently open (we render our own
+  // menu instead of a native <select> so it matches the app's look instead
+  // of the OS's default picker chrome).
+  let openTagPickerVerse = null;
 
   function renderTagPicker(book, chapter, vnum, tagsOnVerse) {
     if (addingTagForVerse === vnum) {
       return `<input class="tag-input tag-new-input" data-verse="${vnum}" placeholder="New tag name…" autocomplete="off">`;
     }
+    const isOpen = openTagPickerVerse === vnum;
     const available = getAllTags().filter((t) => !tagsOnVerse.includes(t));
-    const options = available.map((t) => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join('');
-    return `<select class="tag-select" data-verse="${vnum}">
-        <option value="" selected disabled>+ Add tag…</option>
-        ${options}
-        <option value="__new__">+ New tag…</option>
-      </select>`;
+    let menu = '';
+    if (isOpen) {
+      const optionsHtml = available.length
+        ? available.map((t) => `<button type="button" class="tag-picker-option" data-verse="${vnum}" data-tag="${escapeHtml(t)}">${escapeHtml(t)}</button>`).join('')
+        : `<div class="tag-picker-empty">No tags yet</div>`;
+      menu = `<div class="tag-picker-menu" data-verse="${vnum}">
+          ${optionsHtml}
+          <button type="button" class="tag-picker-option tag-picker-new" data-verse="${vnum}">+ New tag…</button>
+        </div>`;
+    }
+    return `<div class="tag-picker">
+        <button type="button" class="tag-picker-btn" data-verse="${vnum}">+ tag</button>
+        ${menu}
+      </div>`;
   }
 
   function confirmNewTag(book, chapter, vnum, rawValue) {
@@ -755,15 +768,25 @@
       }, 500));
     });
 
-    pane.querySelectorAll('.tag-select').forEach((sel) => {
-      sel.addEventListener('change', () => {
-        const vnum = parseInt(sel.dataset.verse, 10);
-        if (sel.value === '__new__') {
+    pane.querySelectorAll('.tag-picker-btn').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const vnum = parseInt(btn.dataset.verse, 10);
+        openTagPickerVerse = openTagPickerVerse === vnum ? null : vnum;
+        renderNotesPane();
+      });
+    });
+    pane.querySelectorAll('.tag-picker-option').forEach((opt) => {
+      opt.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const vnum = parseInt(opt.dataset.verse, 10);
+        openTagPickerVerse = null;
+        if (opt.classList.contains('tag-picker-new')) {
           addingTagForVerse = vnum;
           renderNotesPane();
           refocusTagInput(vnum);
-        } else if (sel.value) {
-          addTagToVerse(book.key, chapter.chapter, vnum, sel.value);
+        } else {
+          addTagToVerse(book.key, chapter.chapter, vnum, opt.dataset.tag);
         }
       });
     });
@@ -1227,6 +1250,22 @@
 
     window.addEventListener('beforeunload', () => {
       if (STATE.settings.workerUrl && STATE.settings.passcode) syncPush(false);
+    });
+
+    // Close the tag picker dropdown when clicking/tapping anywhere outside it.
+    const closeTagPickerOutside = (e) => {
+      if (openTagPickerVerse !== null && !e.target.closest('.tag-picker')) {
+        openTagPickerVerse = null;
+        renderNotesPane();
+      }
+    };
+    document.addEventListener('mousedown', closeTagPickerOutside);
+    document.addEventListener('touchstart', closeTagPickerOutside, { passive: true });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && openTagPickerVerse !== null) {
+        openTagPickerVerse = null;
+        renderNotesPane();
+      }
     });
   }
 
