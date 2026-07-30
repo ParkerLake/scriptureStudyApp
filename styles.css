@@ -512,6 +512,19 @@ html, body {
   font-family: var(--sans);
 }
 
+.tag-select {
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+  padding: 3px 6px;
+  font-size: 11px;
+  max-width: 130px;
+  font-family: var(--sans);
+  background: var(--panel-bg);
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.tag-select:hover { background: var(--accent-light); }
+
 .verse-tag-pill {
   display: inline-block;
   font-size: 10.5px;

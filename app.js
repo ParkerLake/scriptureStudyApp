@@ -633,12 +633,6 @@
     return Array.from(set).sort();
   }
 
-  function refreshTagDatalist() {
-    const dl = el('allTagsList');
-    if (!dl) return;
-    dl.innerHTML = getAllTags().map((t) => `<option value="${escapeHtml(t)}">`).join('');
-  }
-
   function addTagToVerse(bookKey, chapter, verse, raw) {
     const tag = raw.trim().toLowerCase().replace(/[,\n]/g, '');
     if (!tag) return;
@@ -657,8 +651,9 @@
 
   function refocusTagInput(verse) {
     setTimeout(() => {
-      const input = document.querySelector(`.tag-input[data-verse="${verse}"]`);
-      if (input) input.focus();
+      const target = document.querySelector(`.tag-select[data-verse="${verse}"]`)
+        || document.querySelector(`.tag-new-input[data-verse="${verse}"]`);
+      if (target) target.focus();
     }, 0);
   }
 
@@ -676,12 +671,40 @@
     renderTagsPane();
   }
 
+  // When set to a verse number, that verse's tag picker shows a free-text
+  // "new tag" input instead of the dropdown, so the person can define a
+  // brand-new tag; it reverts back to the dropdown once they confirm it (or
+  // click/tab away), keeping every later tag choice a pick from that list.
+  let addingTagForVerse = null;
+
+  function renderTagPicker(book, chapter, vnum, tagsOnVerse) {
+    if (addingTagForVerse === vnum) {
+      return `<input class="tag-input tag-new-input" data-verse="${vnum}" placeholder="New tag name…" autocomplete="off">`;
+    }
+    const available = getAllTags().filter((t) => !tagsOnVerse.includes(t));
+    const options = available.map((t) => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join('');
+    return `<select class="tag-select" data-verse="${vnum}">
+        <option value="" selected disabled>+ Add tag…</option>
+        ${options}
+        <option value="__new__">+ New tag…</option>
+      </select>`;
+  }
+
+  function confirmNewTag(book, chapter, vnum, rawValue) {
+    addingTagForVerse = null;
+    const trimmed = rawValue.trim();
+    if (trimmed) {
+      addTagToVerse(book.key, chapter.chapter, vnum, trimmed); // re-renders internally
+    } else {
+      renderNotesPane();
+    }
+  }
+
   function renderNotesPane() {
     const pane = el('notesPane');
     const book = STATE.currentBook;
     const chapter = currentChapterObj();
     const cKey = chapterKey(book.key, chapter.chapter);
-    refreshTagDatalist();
 
     let html = `<label>Chapter note — ${book.name} ${chapter.chapter}</label>
       <textarea id="chapterNoteInput" placeholder="Your thoughts on this chapter…">${escapeHtml(STATE.data.chapterNotes[cKey] || '')}</textarea>
@@ -704,7 +727,7 @@
           <div class="vn-ref">${book.name} ${chapter.chapter}:${vnum}</div>
           <div class="vn-tags" data-verse="${vnum}">
             ${tags.map((t) => `<span class="tag-chip" data-tag="${escapeHtml(t)}">${escapeHtml(t)} <span class="tag-remove" data-tag="${escapeHtml(t)}">×</span></span>`).join('')}
-            <input class="tag-input" data-verse="${vnum}" list="allTagsList" placeholder="+ tag" autocomplete="off">
+            ${renderTagPicker(book, chapter, vnum, tags)}
           </div>
           <textarea id="vnote-${vnum}" data-verse="${vnum}" placeholder="Note for this verse…">${escapeHtml(STATE.data.verseNotes[vKey] || '')}</textarea>
         </div>`;
@@ -732,13 +755,37 @@
       }, 500));
     });
 
-    pane.querySelectorAll('.tag-input').forEach((input) => {
+    pane.querySelectorAll('.tag-select').forEach((sel) => {
+      sel.addEventListener('change', () => {
+        const vnum = parseInt(sel.dataset.verse, 10);
+        if (sel.value === '__new__') {
+          addingTagForVerse = vnum;
+          renderNotesPane();
+          refocusTagInput(vnum);
+        } else if (sel.value) {
+          addTagToVerse(book.key, chapter.chapter, vnum, sel.value);
+        }
+      });
+    });
+    pane.querySelectorAll('.tag-new-input').forEach((input) => {
       input.addEventListener('keydown', (e) => {
         if (e.key === 'Enter' || e.key === ',') {
           e.preventDefault();
-          addTagToVerse(book.key, chapter.chapter, parseInt(input.dataset.verse, 10), input.value);
-          input.value = '';
+          confirmNewTag(book, chapter, parseInt(input.dataset.verse, 10), input.value);
+        } else if (e.key === 'Escape') {
+          addingTagForVerse = null;
+          renderNotesPane();
         }
+      });
+      input.addEventListener('blur', () => {
+        // give a click on something else (e.g. Escape handling) a moment to
+        // land first; if the field is still empty and still "active", just
+        // revert to the picklist rather than leaving a blank input behind
+        setTimeout(() => {
+          if (addingTagForVerse !== null && document.activeElement !== input) {
+            confirmNewTag(book, chapter, parseInt(input.dataset.verse, 10), input.value);
+          }
+        }, 150);
       });
     });
     pane.querySelectorAll('.tag-remove').forEach((btn) => {
