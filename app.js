@@ -362,6 +362,20 @@
   // Text-selection -> highlight toolbar
   // ---------------------------------------------------------------------
   function getTextOffsetInVerse(verseTextEl, node, nodeOffset) {
+    // A selection boundary can land outside verse-text entirely — e.g. in
+    // the verse number or a note dot / tag pill, which sit as siblings of
+    // verse-text rather than inside it. Clamp those to the nearest edge of
+    // the actual verse text instead of miscounting them.
+    const verseRange = document.createRange();
+    verseRange.selectNodeContents(verseTextEl);
+    let cmp = 0;
+    try {
+      cmp = verseRange.comparePoint(node, nodeOffset);
+    } catch (e) {
+      cmp = 0;
+    }
+    if (cmp < 0) return 0;
+    if (cmp > 0) return verseTextEl.textContent.length;
     const walker = document.createTreeWalker(verseTextEl, NodeFilter.SHOW_TEXT, null);
     let total = 0;
     let n;
@@ -384,14 +398,24 @@
       return;
     }
     const range = sel.getRangeAt(0);
-    const verseTextEl = range.commonAncestorContainer.nodeType === 1
-      ? range.commonAncestorContainer.closest('.verse-text')
-      : range.commonAncestorContainer.parentElement.closest('.verse-text');
+    // Find the enclosing .verse row first, then descend into it for
+    // .verse-text — searching only upward for .verse-text itself fails
+    // whenever the selection's common ancestor is .verse rather than
+    // .verse-text, which happens whenever the selection is dragged back far
+    // enough to include the verse number (a sibling of .verse-text, not an
+    // ancestor of it).
+    const containerNode = range.commonAncestorContainer;
+    const containerEl = containerNode.nodeType === 1 ? containerNode : containerNode.parentElement;
+    const verseEl = containerEl ? containerEl.closest('.verse') : null;
+    if (!verseEl) {
+      hideToolbar();
+      return;
+    }
+    const verseTextEl = verseEl.querySelector('.verse-text');
     if (!verseTextEl) {
       hideToolbar();
       return;
     }
-    const verseEl = verseTextEl.closest('.verse');
     const start = getTextOffsetInVerse(verseTextEl, range.startContainer, range.startOffset);
     const end = getTextOffsetInVerse(verseTextEl, range.endContainer, range.endOffset);
     if (start === end) {
