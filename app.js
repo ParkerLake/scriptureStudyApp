@@ -15,7 +15,7 @@
   const LS_POSITION_KEY = 'bom_last_position_v1';
 
   function emptyData() {
-    return { version: 1, highlights: [], chapterNotes: {}, verseNotes: {}, verseTags: {}, updatedAt: 0 };
+    return { version: 1, highlights: [], chapterNotes: {}, verseNotes: {}, verseTags: {}, bookmarks: [], updatedAt: 0 };
   }
 
   function loadLocalData() {
@@ -85,6 +85,7 @@
     wireGlobalUI();
     renderSettingsPane();
     renderTagsPane();
+    renderBookmarksPane();
 
     if (STATE.settings.workerUrl && STATE.settings.passcode) {
       await syncPull(true);
@@ -170,6 +171,129 @@
         if (parseInt(b.textContent, 10) === STATE.currentChapter) b.classList.add('active');
       });
     }
+  }
+
+  // ---------------------------------------------------------------------
+  // Bookmarks — deliberate, named markers you place with a tap (unlike the
+  // silent last-position tracking below, these are explicit, can be
+  // renamed, and sync across devices as part of STATE.data).
+  // ---------------------------------------------------------------------
+  let editingBookmarkId = null;
+
+  function toggleBookmark(bookKey, chapter, verse) {
+    const list = STATE.data.bookmarks || (STATE.data.bookmarks = []);
+    const idx = list.findIndex((b) => b.book === bookKey && b.chapter === chapter && b.verse === verse);
+    if (idx !== -1) {
+      list.splice(idx, 1);
+    } else {
+      const book = STATE.booksByKey[bookKey];
+      list.push({
+        id: 'bm' + Date.now() + Math.random().toString(36).slice(2, 7),
+        book: bookKey,
+        chapter,
+        verse,
+        label: `${book ? book.name : bookKey} ${chapter}:${verse}`,
+        createdAt: Date.now(),
+      });
+    }
+    saveLocalData();
+    renderChapter();
+    renderBookmarksPane();
+  }
+
+  function removeBookmark(id) {
+    STATE.data.bookmarks = (STATE.data.bookmarks || []).filter((b) => b.id !== id);
+    saveLocalData();
+    renderChapter();
+    renderBookmarksPane();
+  }
+
+  function confirmBookmarkRename(id, rawValue) {
+    const trimmed = rawValue.trim();
+    const bm = (STATE.data.bookmarks || []).find((b) => b.id === id);
+    if (bm && trimmed) bm.label = trimmed;
+    editingBookmarkId = null;
+    saveLocalData();
+    renderBookmarksPane();
+  }
+
+  function navigateToBookmark(bookKey, chapter, verse) {
+    navigateTo(bookKey, chapter);
+    setTimeout(() => {
+      const target = document.querySelector(`.verse[data-verse="${verse}"]`);
+      if (target) target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 60);
+  }
+
+  function renderBookmarksPane() {
+    const container = el('bookmarksSection');
+    if (!container || !STATE.content) return;
+    const bookmarks = (STATE.data.bookmarks || []).slice().sort((a, b) => b.createdAt - a.createdAt);
+
+    let html = `<div class="sidebar-section-header">Bookmarks</div>`;
+    if (!bookmarks.length) {
+      html += `<div class="bookmarks-empty">Tap the ribbon next to a verse number to bookmark your place.</div>`;
+    } else {
+      html += bookmarks
+        .map((b) => {
+          const book = STATE.booksByKey[b.book];
+          const ref = `${book ? book.name : b.book} ${b.chapter}:${b.verse}`;
+          if (editingBookmarkId === b.id) {
+            return `<div class="bookmark-item">
+              <input class="bookmark-rename-input" data-id="${b.id}" value="${escapeHtml(b.label)}">
+            </div>`;
+          }
+          return `<div class="bookmark-item" data-id="${b.id}" data-book="${b.book}" data-chapter="${b.chapter}" data-verse="${b.verse}">
+            <div class="bookmark-main">
+              <div class="bookmark-label" data-id="${b.id}" title="Click to rename">${escapeHtml(b.label)}</div>
+              <div class="bookmark-ref">${escapeHtml(ref)}</div>
+            </div>
+            <span class="bookmark-remove" data-id="${b.id}" title="Remove bookmark">×</span>
+          </div>`;
+        })
+        .join('');
+    }
+    container.innerHTML = html;
+
+    container.querySelectorAll('.bookmark-item[data-id]').forEach((item) => {
+      item.addEventListener('click', (e) => {
+        if (e.target.closest('.bookmark-remove') || e.target.closest('.bookmark-label')) return;
+        navigateToBookmark(item.dataset.book, parseInt(item.dataset.chapter, 10), parseInt(item.dataset.verse, 10));
+      });
+    });
+    container.querySelectorAll('.bookmark-label').forEach((lbl) => {
+      lbl.addEventListener('click', (e) => {
+        e.stopPropagation();
+        editingBookmarkId = lbl.dataset.id;
+        renderBookmarksPane();
+        setTimeout(() => {
+          const input = container.querySelector('.bookmark-rename-input');
+          if (input) {
+            input.focus();
+            input.select();
+          }
+        }, 0);
+      });
+    });
+    container.querySelectorAll('.bookmark-remove').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        removeBookmark(btn.dataset.id);
+      });
+    });
+    container.querySelectorAll('.bookmark-rename-input').forEach((input) => {
+      input.addEventListener('click', (e) => e.stopPropagation());
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          confirmBookmarkRename(input.dataset.id, input.value);
+        } else if (e.key === 'Escape') {
+          editingBookmarkId = null;
+          renderBookmarksPane();
+        }
+      });
+      input.addEventListener('blur', () => confirmBookmarkRename(input.dataset.id, input.value));
+    });
   }
 
   // ---------------------------------------------------------------------
@@ -263,6 +387,19 @@
       numSpan.title = 'Click to add/edit a note for this verse';
       numSpan.addEventListener('click', () => openVerseNote(v.verse));
       p.appendChild(numSpan);
+
+      const bookmarked = (STATE.data.bookmarks || []).some(
+        (b) => b.book === book.key && b.chapter === chapter.chapter && b.verse === v.verse
+      );
+      const bmBtn = document.createElement('span');
+      bmBtn.className = 'verse-bookmark-btn' + (bookmarked ? ' active' : '');
+      bmBtn.title = bookmarked ? 'Remove this bookmark' : 'Bookmark this verse';
+      bmBtn.innerHTML = '<svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true"><path d="M5 3h14v18l-7-5-7 5z"/></svg>';
+      bmBtn.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        toggleBookmark(book.key, chapter.chapter, v.verse);
+      });
+      p.appendChild(bmBtn);
 
       const selectBtn = document.createElement('span');
       selectBtn.className = 'verse-select-btn';
@@ -1257,6 +1394,7 @@
       if (!STATE.data.updatedAt || (remoteData.updatedAt || 0) >= STATE.data.updatedAt) {
         STATE.data = Object.assign(emptyData(), remoteData);
         localStorage.setItem(LS_DATA_KEY, JSON.stringify(STATE.data));
+        renderBookmarksPane();
         if (STATE.currentBook) {
           renderChapter();
           renderNotesPane();
@@ -1321,6 +1459,7 @@
         renderChapter();
         renderNotesPane();
         renderHighlightsPane();
+        renderBookmarksPane();
         setGhStatus('Imported local file.');
       } catch (err) {
         alert('Could not read that file: ' + err.message);

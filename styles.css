@@ -81,6 +81,66 @@ html, body {
 .search-result b { color: var(--accent); }
 .search-result .snippet { color: var(--text-dim); display: block; margin-top: 2px; }
 
+.sidebar-section-header {
+  padding: 10px 16px 4px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: .4px;
+}
+
+#bookmarksSection {
+  max-height: 190px;
+  overflow-y: auto;
+  border-bottom: 1px solid var(--border);
+}
+
+.bookmarks-empty {
+  padding: 2px 16px 12px;
+  font-size: 11.5px;
+  color: var(--text-dim);
+}
+
+.bookmark-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 16px;
+  cursor: pointer;
+  border-bottom: 1px solid #f0ebe0;
+}
+.bookmark-item:hover { background: var(--accent-light); }
+.bookmark-main { min-width: 0; flex: 1; }
+.bookmark-label {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: text;
+}
+.bookmark-label:hover { text-decoration: underline; }
+.bookmark-ref { font-size: 11px; color: var(--text-dim); }
+.bookmark-remove {
+  cursor: pointer;
+  color: var(--text-dim);
+  font-size: 15px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.bookmark-remove:hover { color: var(--accent); }
+.bookmark-rename-input {
+  width: 100%;
+  font-size: 12.5px;
+  padding: 3px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: var(--sans);
+}
+
 #bookList {
   flex: 1;
   overflow-y: auto;
@@ -232,6 +292,19 @@ html, body {
   -webkit-user-select: none;
 }
 .verse-select-btn:hover { background: var(--accent-light); color: var(--accent); }
+
+.verse-bookmark-btn {
+  display: inline-block;
+  vertical-align: super;
+  margin-right: 5px;
+  cursor: pointer;
+  color: var(--text-dim);
+  line-height: 0;
+}
+.verse-bookmark-btn svg path { fill: none; stroke: currentColor; stroke-width: 2; }
+.verse-bookmark-btn:hover { color: var(--accent); }
+.verse-bookmark-btn.active { color: var(--accent); }
+.verse-bookmark-btn.active svg path { fill: currentColor; }
 
 .verse-note-dot {
   display: inline-block;
