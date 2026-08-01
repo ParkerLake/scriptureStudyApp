@@ -212,7 +212,26 @@ html, body {
   margin-right: 2px;
   font-family: var(--sans);
   cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
 }
+
+.verse-select-btn {
+  display: inline-block;
+  font-size: 9px;
+  font-weight: 600;
+  font-family: var(--sans);
+  color: var(--text-dim);
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  padding: 0px 4px;
+  margin-right: 5px;
+  vertical-align: super;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.verse-select-btn:hover { background: var(--accent-light); color: var(--accent); }
 
 .verse-note-dot {
   display: inline-block;

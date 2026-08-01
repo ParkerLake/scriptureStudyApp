@@ -182,6 +182,7 @@
     if (!chapter) return;
     STATE.currentBook = book;
     STATE.currentChapter = chapterNum;
+    wordTapAnchor = null;
     expandBookOnly(bookKey);
     highlightActiveChapterBtn();
     renderChapter();
@@ -262,6 +263,16 @@
       numSpan.title = 'Click to add/edit a note for this verse';
       numSpan.addEventListener('click', () => openVerseNote(v.verse));
       p.appendChild(numSpan);
+
+      const selectBtn = document.createElement('span');
+      selectBtn.className = 'verse-select-btn';
+      selectBtn.textContent = 'Sel';
+      selectBtn.title = 'Select this whole verse to highlight, underline, or box';
+      selectBtn.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        selectWholeVerse(v.verse);
+      });
+      p.appendChild(selectBtn);
 
       const textSpan = document.createElement('span');
       textSpan.className = 'verse-text';
@@ -386,12 +397,181 @@
     return total;
   }
 
+  // Tracks where a touch started, so a touchend can tell a short tap (little
+  // movement — treat as a word-tap) apart from a drag (real movement —
+  // treat as adjusting/creating a native selection). This matters because
+  // after a first word-tap we deliberately leave a live browser Selection
+  // in place for visual feedback, so a second tap's touchend can't use
+  // "is there a selection?" to tell tap from drag — that leftover
+  // selection is from the previous tap, not this one.
+  let touchStartPoint = null;
+
   function wireVerseSelection() {
     el('readingArea').addEventListener('mouseup', handleSelectionChange);
+    el('readingArea').addEventListener('touchstart', (e) => {
+      const t = e.touches && e.touches[0];
+      touchStartPoint = t ? { x: t.clientX, y: t.clientY } : null;
+    }, { passive: true });
     el('readingArea').addEventListener('touchend', handleSelectionChange);
   }
 
+  function isCoarsePointer() {
+    return !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
+  }
+
+  // Dragging the native selection handles to pick out exact words is fiddly
+  // on a touchscreen — the handles are small and the loupe only shows so
+  // much. As an easier alternative for touch, a plain tap (no drag) on a
+  // word selects that whole word; tapping a second word extends the
+  // selection to cover everything between the two. This never runs on
+  // mouse/desktop, where dragging the selection already works well.
+  let wordTapAnchor = null;
+
+  function expandToWordBoundaries(text, offset) {
+    const isWordChar = (ch) => /[A-Za-z0-9'’-]/.test(ch);
+    offset = Math.max(0, Math.min(offset, text.length));
+    let start = offset;
+    while (start > 0 && isWordChar(text[start - 1])) start--;
+    let end = offset;
+    while (end < text.length && isWordChar(text[end])) end++;
+    if (start === end) {
+      // Tapped on whitespace/punctuation between words — snap to the
+      // nearest word, preferring the one that follows the tap point.
+      let fEnd = offset;
+      while (fEnd < text.length && !isWordChar(text[fEnd])) fEnd++;
+      if (fEnd < text.length) {
+        start = fEnd;
+        end = fEnd;
+        while (end < text.length && isWordChar(text[end])) end++;
+      } else {
+        let bStart = offset;
+        while (bStart > 0 && !isWordChar(text[bStart - 1])) bStart--;
+        start = bStart;
+        end = bStart;
+        while (start > 0 && isWordChar(text[start - 1])) start--;
+      }
+    }
+    return { start, end };
+  }
+
+  function setWordTapSelection(verseTextEl, verseNum, start, end) {
+    const startPos = findNodeAtOffset(verseTextEl, start);
+    const endPos = findNodeAtOffset(verseTextEl, end);
+    if (startPos && endPos) {
+      const range = document.createRange();
+      range.setStart(startPos.node, startPos.offset);
+      range.setEnd(endPos.node, endPos.offset);
+      const winSel = window.getSelection();
+      winSel.removeAllRanges();
+      winSel.addRange(range);
+    }
+    STATE.pendingSelection = {
+      bookKey: STATE.currentBook.key,
+      chapter: STATE.currentChapter,
+      verse: verseNum,
+      start,
+      end,
+      viaTouch: true,
+    };
+    showAnnotateFab();
+  }
+
+  function handleWordTap(e) {
+    const touch = e.changedTouches && e.changedTouches[0];
+    if (!touch) return;
+    const targetEl = document.elementFromPoint(touch.clientX, touch.clientY);
+    const verseTextEl = targetEl && targetEl.closest('.verse-text');
+    if (!verseTextEl) {
+      // Tap landed outside any verse's text (the number, a note dot, a tag
+      // pill, the margin) — leave an in-progress tap-selection alone rather
+      // than cancelling it, so stray taps around the UI don't lose it.
+      if (!wordTapAnchor) hideToolbar();
+      return;
+    }
+    const verseEl = verseTextEl.closest('.verse');
+    const verseNum = parseInt(verseEl.dataset.verse, 10);
+    const rawText = verseTextEl.dataset.rawText || '';
+
+    let caretRange = null;
+    if (document.caretRangeFromPoint) {
+      caretRange = document.caretRangeFromPoint(touch.clientX, touch.clientY);
+    } else if (document.caretPositionFromPoint) {
+      const pos = document.caretPositionFromPoint(touch.clientX, touch.clientY);
+      if (pos) {
+        caretRange = document.createRange();
+        caretRange.setStart(pos.offsetNode, pos.offset);
+      }
+    }
+    if (!caretRange) return;
+
+    const tapOffset = getTextOffsetInVerse(verseTextEl, caretRange.startContainer, caretRange.startOffset);
+    const { start: wStart, end: wEnd } = expandToWordBoundaries(rawText, tapOffset);
+    if (wStart === wEnd) return;
+
+    const sameVerse = wordTapAnchor
+      && wordTapAnchor.bookKey === STATE.currentBook.key
+      && wordTapAnchor.chapter === STATE.currentChapter
+      && wordTapAnchor.verse === verseNum;
+    if (sameVerse) {
+      const rangeStart = Math.min(wordTapAnchor.anchorStart, wStart);
+      const rangeEnd = Math.max(wordTapAnchor.anchorEnd, wEnd);
+      setWordTapSelection(verseTextEl, verseNum, rangeStart, rangeEnd);
+    } else {
+      wordTapAnchor = { bookKey: STATE.currentBook.key, chapter: STATE.currentChapter, verse: verseNum, anchorStart: wStart, anchorEnd: wEnd };
+      setWordTapSelection(verseTextEl, verseNum, wStart, wEnd);
+    }
+  }
+
+  // Quick shortcut (touch and mouse alike) to select an entire verse
+  // without dragging or tapping through it word by word.
+  function selectWholeVerse(verseNum) {
+    const verseTextEl = document.querySelector(`.verse[data-verse="${verseNum}"] .verse-text`);
+    if (!verseTextEl) return;
+    const text = verseTextEl.dataset.rawText || '';
+    if (!text.length) return;
+    const startPos = findNodeAtOffset(verseTextEl, 0);
+    const endPos = findNodeAtOffset(verseTextEl, text.length);
+    if (!startPos || !endPos) return;
+    const range = document.createRange();
+    range.setStart(startPos.node, startPos.offset);
+    range.setEnd(endPos.node, endPos.offset);
+    const winSel = window.getSelection();
+    winSel.removeAllRanges();
+    winSel.addRange(range);
+    const touchMode = isCoarsePointer();
+    STATE.pendingSelection = {
+      bookKey: STATE.currentBook.key,
+      chapter: STATE.currentChapter,
+      verse: verseNum,
+      start: 0,
+      end: text.length,
+      viaTouch: touchMode,
+    };
+    if (touchMode) {
+      wordTapAnchor = { bookKey: STATE.currentBook.key, chapter: STATE.currentChapter, verse: verseNum, anchorStart: 0, anchorEnd: text.length };
+      showAnnotateFab();
+    } else {
+      showToolbar(range);
+    }
+  }
+
   function handleSelectionChange(e) {
+    if (e && e.type === 'touchend') {
+      const t = e.changedTouches && e.changedTouches[0];
+      const moved = (touchStartPoint && t)
+        ? Math.hypot(t.clientX - touchStartPoint.x, t.clientY - touchStartPoint.y)
+        : null;
+      // Only treat this as a tap when we positively know there was little
+      // movement. If we can't tell (no matching touchstart was captured —
+      // shouldn't normally happen), fall through to the existing
+      // selection-based handling below rather than guessing.
+      if (moved !== null && moved < 10) {
+        handleWordTap(e);
+        return;
+      }
+      // otherwise this was a real drag (creating or adjusting a selection
+      // via the native handles) — fall through to the normal handling below
+    }
     const sel = window.getSelection();
     if (!sel || sel.isCollapsed || sel.rangeCount === 0) {
       hideToolbar();
@@ -539,6 +719,7 @@
     el('hlBackdrop').classList.remove('show');
     el('annotateFab').classList.remove('show');
     STATE.pendingSelection = null;
+    wordTapAnchor = null;
     window.getSelection().removeAllRanges();
     if (wasSheet) {
       // let the slide-down transition play before fully hiding
