@@ -542,12 +542,14 @@
   // "is there a selection?" to tell tap from drag — that leftover
   // selection is from the previous tap, not this one.
   let touchStartPoint = null;
+  let touchStartTime = null;
 
   function wireVerseSelection() {
     el('readingArea').addEventListener('mouseup', handleSelectionChange);
     el('readingArea').addEventListener('touchstart', (e) => {
       const t = e.touches && e.touches[0];
       touchStartPoint = t ? { x: t.clientX, y: t.clientY } : null;
+      touchStartTime = Date.now();
     }, { passive: true });
     el('readingArea').addEventListener('touchend', handleSelectionChange);
   }
@@ -692,23 +694,51 @@
     }
   }
 
+  // A real short tap and a native long-press-to-select both land here with
+  // near-zero finger movement, so movement distance alone can't tell them
+  // apart. A long-press is held for a while before release, though — iOS's
+  // own gesture recognizer needs that time to decide "this is a selection,
+  // not a tap" and bring up its handles. Requiring the touch to also be
+  // *quick* keeps us from hijacking a long-press: if we called
+  // handleWordTap() on it, we'd replace the OS's live selection (which has
+  // real, draggable handles) with our own JS-only Range that has no handles
+  // at all — so the very next attempt to drag from it would just start a
+  // fresh touch, find no selection to extend, and collapse it. That's the
+  // "tries to word-select, then completely deselects" symptom. Letting a
+  // long-press release fall through instead means we never touch
+  // window.getSelection() ourselves — we only read whatever the OS already
+  // built, handles and all, and leave it alone.
+  const TAP_MAX_MS = 350;
+
   function handleSelectionChange(e) {
     if (e && e.type === 'touchend') {
       const t = e.changedTouches && e.changedTouches[0];
       const moved = (touchStartPoint && t)
         ? Math.hypot(t.clientX - touchStartPoint.x, t.clientY - touchStartPoint.y)
         : null;
+      const elapsed = touchStartTime ? (Date.now() - touchStartTime) : null;
       // Only treat this as a tap when we positively know there was little
-      // movement. If we can't tell (no matching touchstart was captured —
-      // shouldn't normally happen), fall through to the existing
-      // selection-based handling below rather than guessing.
-      if (moved !== null && moved < 10) {
+      // movement AND it happened quickly. If we can't tell (no matching
+      // touchstart was captured — shouldn't normally happen), fall through
+      // to the existing selection-based handling below rather than guessing.
+      if (moved !== null && moved < 10 && elapsed !== null && elapsed < TAP_MAX_MS) {
         handleWordTap(e);
         return;
       }
-      // otherwise this was a real drag (creating or adjusting a selection
-      // via the native handles) — fall through to the normal handling below
+      if (moved !== null && moved < 10) {
+        // No/little movement but not quick — a long-press release. iOS
+        // sometimes hasn't finished applying its own word selection at the
+        // exact moment touchend fires, so give it a beat before reading it.
+        setTimeout(() => readLiveSelection(true), 30);
+        return;
+      }
+      // A real drag (creating or adjusting a selection via the native
+      // handles) — read it directly, below.
     }
+    readLiveSelection(!!(e && e.type === 'touchend'));
+  }
+
+  function readLiveSelection(viaTouch) {
     const sel = window.getSelection();
     if (!sel || sel.isCollapsed || sel.rangeCount === 0) {
       hideToolbar();
@@ -746,7 +776,6 @@
     // space and taps. So for touch we show a small docked "Annotate" button
     // instead, and only reveal the full toolbar (as a bottom sheet, away
     // from the selection) once the person deliberately taps it.
-    const viaTouch = !!(e && e.type === 'touchend');
     STATE.pendingSelection = {
       bookKey: STATE.currentBook.key,
       chapter: STATE.currentChapter,
